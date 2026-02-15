@@ -59,8 +59,7 @@ export async function swapCommand(options: SwapOptions): Promise<void> {
       args: [tokenInAddress, tokenOutAddress, amountParsed],
     })) as bigint;
     
-    const slippageMultiplier = BigInt(10000 - slippageBps) / 10000n;
-    const minAmountOut = quote * slippageMultiplier;
+    const minAmountOut = (quote * BigInt(10000 - slippageBps)) / 10000n;
     
     console.log(`\nSwap quote:`);
     console.log(`  Input: ${amountIn} ${tokenIn.toUpperCase()}`);
@@ -77,17 +76,30 @@ export async function swapCommand(options: SwapOptions): Promise<void> {
     
     const approveHash = await walletClient.writeContract(approveRequest);
     console.log(`\nApproval submitted: ${approveHash}`);
-    await publicClient.waitForTransactionReceipt({ hash: approveHash });
+    const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
+    if (approveReceipt.status !== "success") {
+      throw new Error(`Approval transaction failed: ${approveHash}`);
+    }
     console.log(`  Approved!`);
     
-    const { request: swapRequest } = await publicClient.simulateContract({
+    const currentAllowance = (await publicClient.readContract({
+      address: tokenInAddress,
+      abi: Abis.tip20,
+      functionName: "allowance",
+      args: [walletClient.account.address, STABLECOIN_DEX],
+    })) as bigint;
+    
+    if (currentAllowance < amountParsed) {
+      throw new Error(`Insufficient allowance after approval. Have: ${currentAllowance}, need: ${amountParsed}`);
+    }
+    console.log(`  Allowance verified: ${currentAllowance}`);
+    
+    const swapHash = await walletClient.writeContract({
       address: STABLECOIN_DEX,
       abi: Abis.stablecoinDex,
       functionName: "swapExactAmountIn",
       args: [tokenInAddress, tokenOutAddress, amountParsed, minAmountOut],
     });
-    
-    const swapHash = await walletClient.writeContract(swapRequest);
     
     console.log(`\nTransaction submitted!`);
     console.log(`  Hash: ${swapHash}`);
